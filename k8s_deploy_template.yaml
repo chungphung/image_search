@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kubernetes.io/change-cause: "${CI_COMMIT_MESSAGE}"
+  labels:
+    app: ${APP_NAME}
+  name: ${APP_NAME}
+  namespace: ${CI_ENVIRONMENT_NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+    spec:
+      hostAliases:
+        - ip: "172.27.11.208"
+          hostnames:
+            - "ipa.bigdata.local"
+        - ip: "172.27.11.227"
+          hostnames:
+            - "replicas-ipa.bigdata.local"
+        - ip: "172.24.178.43"
+          hostnames:
+            - "clickhouse.de.bigdata.local"
+        - ip: "172.27.11.186"
+          hostnames:
+            - "vault.sys.bigdata.local"
+      containers:
+        - name: ${APP_NAME}
+          image: ${IMAGE_TAG}
+          ports:
+            - containerPort: 6002
+          resources:
+            limits:
+              cpu: 500m
+              memory: 800Mi
+            requests:
+              cpu: 300m
+              memory: 600Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/bash", "-c", "sleep 15"]
+          env:
+            - name: VAULT_ROLE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vault-secret
+                  key: VAULT_ROLE_ID
+            - name: VAULT_SECRET_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vault-secret
+                  key: VAULT_SECRET_ID
+            - name: ENV
+              value: ${CI_ENVIRONMENT_NAME}
+            - name: VAULT_PATH
+              value: ${APP_NAME}
+            - name: VAULT_HOST
+              value: ${VAULT_DOMAIN}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${APP_NAME}
+  namespace: ${CI_ENVIRONMENT_NAME}
+  labels:
+    app: ${APP_NAME}
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 6002
+  selector:
+    app: ${APP_NAME}
+  sessionAffinity: None
+  type: ClusterIP
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  name: ${APP_NAME}
+  namespace: ${CI_ENVIRONMENT_NAME}
+spec:
+  rules:
+    - host: ${HOST_APP}
+      http:
+        paths:
+          - backend:
+              serviceName: ${APP_NAME}
+              servicePort: 80
+            path: /${APP_NAME}/v2(/|$)(.*)
